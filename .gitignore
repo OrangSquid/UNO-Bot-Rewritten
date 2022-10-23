@@ -1,3 +1,5 @@
 .venv
 .vscode
 key.txt
+*.pyc
+test.py

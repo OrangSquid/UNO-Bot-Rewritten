@@ -1,17 +1,29 @@
-
 import logging
+from typing import Dict, List
 import discord
+from discord.ext import commands
+from cogs.uno import uno
 
-class UnoBot(discord.Client):
+class UnoBot(commands.Bot):
     
     async def on_ready(self):
         # Setup logging on this class
-        discord.utils.setup_logging()
+        discord.utils.setup_logging(level=logging.DEBUG)
         self._log = logging.getLogger("UnoBot")
+        self._lobbies: Dict[str, List[discord.User]] = {}
+        
+        await self.add_cog(uno.UnoCog(self))
+        
+        #await self.tree.sync()
+        
         self._log.info("Ready")
+        
 
-if __name__ == "__main__":
+def main():
     with open("key.txt") as file:
         key = file.readline()
-    bot = UnoBot(intents=discord.Intents.default())
+    bot = UnoBot(command_prefix=".", intents=discord.Intents.default())
     bot.run(key)
+
+if __name__ == "__main__":
+    main()
