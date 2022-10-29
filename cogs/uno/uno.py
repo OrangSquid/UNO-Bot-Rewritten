@@ -1,52 +1,84 @@
-import logging
+"""
+Uno cog for bots
+"""
 import json
+import logging
+from typing import Any, Dict, Set
+
 import discord
-import sys
-import os
-from discord.ext import commands
 from discord import app_commands
-from typing import Dict, List, Any
+from discord.ext import commands
+
+from cogs.uno.constants import discord_messages, log_messages, paths
 
 MAX_PLAYERS = 6
 
+# TODO: make all strings constants
 class UnoCog(commands.Cog):
-
+    """
+    Cog responsible with communication with the users on discord
+    """
+    
     def __init__(self, bot):
         self._log = logging.getLogger("cogs.uno.UnoCog")
-        self._lobbies: Dict[int | None, LobbyView] = {}
+        self._lobbies: Dict[int | None, LobbyView]
+        self._games: Dict[int | None, Any]
         self.bot = bot
         self._log.info("Ready")
 
-        with open("cogs/uno/embeds/embeds.json", "r") as file:
+        with open(paths.EMBEDS_PATH, "r", encoding="utf-8") as file:
             self._embeds = json.load(file)
 
     def destroy_lobby(self, guild_id: int):
+        """
+        Called by the underlying LobbyView to destroy the lobby
+
+        Args:
+        ----
+            guild_id (int): guild id of where to destroy the lobby
+        """
         del self._lobbies[guild_id]
+    
+    def start_game(self):
+        """
+        Start game and unerlying logic
+        """
+        pass
 
     @app_commands.command()
     async def create_game(self, interaction: discord.Interaction) -> None:
-        self._log.debug(f"create_game: User ({interaction.user.id}) in guild ({interaction.guild_id})")
-        view = self._lobbies.get(interaction.guild_id)
+        """
+        Creates a lobby and sends the LobbyView for people to join
+
+        Args:
+        ----
+            interaction (discord.Interaction): interaction the triggered this event
+        """
+        self._log.debug(log_messages.COMMAND_CALLED, log_messages.CREATE_GAME,
+                        interaction.user.id, interaction.guild_id)
         if interaction.guild is None:
-            self._log.debug(f"create_game: User ({interaction.user.id}) tried to make a lobby in DMs")
-            await interaction.response.send_message("❌ You cannot make lobbies in DMs", ephemeral=True)
-        elif view is None:
+            self._log.debug(log_messages.CG_DM_ERROR, interaction.user.id)
+            await interaction.response.send_message(discord_messages.CG_DM_ERROR, ephemeral=True)
+        elif interaction.guild.id in self._lobbies:
+            await interaction.response.send_message(discord_messages.CG_LOBBY_EXISTS, ephemeral=True)
+        else:
             view = LobbyView(interaction.user, interaction.guild, self)
             self._lobbies[interaction.guild.id] = view
             await interaction.response.send_message(embed=discord.Embed.from_dict(self._embeds["create_lobby"]), view=view)
-            self._log.debug(f"create_game: Added new player ({interaction.user.id}) to lobby on guild ({interaction.guild_id}) ({len(self._lobbies[interaction.guild_id])}/{MAX_PLAYERS})")
-        else:
-            await interaction.response.send_message("❌ A lobby already exists in this server", ephemeral=True)
+            self._log.debug(log_messages.CG_ADDED_PLAYER, interaction.user.id, interaction.guild_id, self._lobbies[interaction.guild_id], MAX_PLAYERS)
 
-
+            
 class LobbyView(discord.ui.View):
+    """
+    Discord view for the lobby including join, leave and start buttons
+    """
 
     def __init__(self, user: discord.User | discord.Member, guild: discord.Guild, cog: UnoCog):
         super().__init__()
         self._log = logging.getLogger("cogs.uno.LobbyView")
         self._caller = user
         self._guild = guild
-        self._players: List[discord.User | discord.Member] = [user]
+        self._players: Set[discord.User | discord.Member] = {user}
         self._cog = cog
 
     def __len__(self):
@@ -54,13 +86,21 @@ class LobbyView(discord.ui.View):
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label="Join")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """
+        Join button method that tries to join a player from the lobby
+
+        Args:
+        ----
+            interaction (discord.Interaction): interaction the triggered this event
+            button (discord.ui.Button): the button itself
+        """
         if interaction.user in self._players:
-            self._log.debug(f"join button: user ({interaction.user.id}) tried to join lobby while already being part of it")
-            await interaction.response.send_message("❌ You're already part of this lobby", ephemeral=True)
+            self._log.debug(log_messages.JB_PART_OF_LOBBY, interaction.user.id)
+            await interaction.response.send_message(discord_messages.JB_PART_OF_LOBBY, ephemeral=True)
         else:
-            self._players.append(interaction.user)
-            self._log.debug(f"join button: Added new player ({interaction.user.id}) to lobby on guild ({interaction.guild_id}) ({len(self._players)}/{MAX_PLAYERS})")
-            await interaction.response.send_message("✅ You joined the lobby", ephemeral=True)
+            self._players.add(interaction.user)
+            self._log.debug(log_messages.JB_JOINED_LOBBY, interaction.user.id, interaction.guild_id, len(self), MAX_PLAYERS)
+            await interaction.response.send_message(discord_messages.JB_JOINED_LOBBY, ephemeral=True)
             # Disabe join button after reachin MAX_PLAYERS
             if len(self._players) == MAX_PLAYERS:
                 button.disabled = True
@@ -69,21 +109,37 @@ class LobbyView(discord.ui.View):
 
     @discord.ui.button(style=discord.ButtonStyle.danger, label="Leave")
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """
+        Leave button method that tries to remove a player from the lobby
+
+        Args:
+        ----
+            interaction (discord.Interaction): interaction the triggered this event
+            button (discord.ui.Button): the button itself
+        """
         if interaction.user not in self._players:
-            self._log.debug(f"leave button: user ({interaction.user.id}) tried to leave lobby while not being part of it")
-            await interaction.response.send_message("❌ You're not part of this lobby", ephemeral=True)
+            self._log.debug(log_messages.LB_NOT_PART_OF_LOBBY, interaction.user.id)
+            await interaction.response.send_message(discord_messages.LB_NOT_PART_OF_LOBBY, ephemeral=True)
         else:
             self._players.remove(interaction.user)
-            self._log.debug(f"leave button: Removed player ({interaction.user.id}) from lobby on guild ({interaction.guild_id}) ({len(self._players)}/{MAX_PLAYERS})")
-            await interaction.response.send_message("✅ You left the lobby", ephemeral=True)
+            self._log.debug(log_messages.LB_LEFT_LOBBY, interaction.user.id, interaction.guild_id, len(self), MAX_PLAYERS)
+            await interaction.response.send_message(discord_messages.LB_LEFT_LOBBY, ephemeral=True)
             # Destroy lobby
             if len(self._players) == 0:
                 if interaction.message is not None:
                     await interaction.message.delete()
-                self._log.debug(f"leave button: Noboyd left in lobby... calling UnoCog to close it...")
-                await interaction.followup.send("Nobody left in lobby, closing it...")
+                self._log.debug(log_messages.LB_NOBODY_LEFT)
+                await interaction.followup.send(discord_messages.LB_NOBODY_LEFT)
                 self._cog.destroy_lobby(self._guild.id)
 
     @discord.ui.button(style=discord.ButtonStyle.success, label="Start")
     async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
+        """
+        Start button method that tries to start a game
+
+        Args:
+        ----
+            interaction (discord.Interaction): interaction the triggered this event
+            button (discord.ui.Button): the button itself
+        """
+        
